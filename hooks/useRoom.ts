@@ -62,6 +62,7 @@ export function useRoom(roomId: string, nickname: string) {
       socket.off("room:joined", onJoined);
       socket.off("user:joined", onUserJoined);
       socket.off("user:left", onUserLeft);
+      socket.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, nickname]);

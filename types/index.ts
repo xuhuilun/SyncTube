@@ -77,6 +77,6 @@ export type ServerToClientEvents = {
 export type ClientToServerEvents = {
   "room:join": (payload: JoinPayload) => void;
   "chat:send": (payload: { content: string }) => void;
-  "video:state": (payload: VideoState) => void;
+  "video:state": (payload: VideoStatePayload) => void;
   "video:seek": (payload: { currentTime: number }) => void;
 };

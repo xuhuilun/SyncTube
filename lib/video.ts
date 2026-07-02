@@ -15,9 +15,11 @@ export function getBilibiliEmbed(url: string): string | null {
     return `https://player.bilibili.com/player.html?aid=${av[1]}&high_quality=1&autoplay=1`;
   }
   if (/b23\.tv\//i.test(url)) {
-    // b23.tv short links need a redirect resolve; we can still embed via the
-    // player by passing the raw URL as the iframe src.
-    return url;
+    // b23.tv short links redirect to bilibili.com (not player.bilibili.com),
+    // which blocks iframe embedding. Without server-side redirect resolution
+    // we cannot extract the BV ID, so we return null and let the isBilibili
+    // warning in VideoControls prompt the user to use the full URL.
+    return null;
   }
   return null;
 }

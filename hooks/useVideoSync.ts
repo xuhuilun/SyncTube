@@ -16,7 +16,7 @@ interface UseVideoSyncArgs {
   roomId: string;
   initial?: VideoState | null;
   // Imperative control over the underlying player.
-  playerRef: React.MutableRefObject<{
+  playerRef: React.RefObject<{
     seekTo?: (seconds: number) => void;
   } | null>;
 }
@@ -24,8 +24,9 @@ interface UseVideoSyncArgs {
 export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
   const [url, setUrl] = useState<string>(initial?.url ?? "");
   const [playing, setPlaying] = useState<boolean>(initial?.playing ?? false);
-  // currentTime is local player time; we do NOT re-render on every tick.
+  // currentTime: ref for callback access, state for reactivity (time display / progress bar).
   const currentTimeRef = useRef<number>(initial?.currentTime ?? 0);
+  const [currentTime, setCurrentTime] = useState<number>(initial?.currentTime ?? 0);
   const applyingRemote = useRef(false);
 
   // Apply initial state once the room syncs.
@@ -35,6 +36,7 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     setUrl(initial.url);
     setPlaying(initial.playing);
     currentTimeRef.current = initial.currentTime;
+    setCurrentTime(initial.currentTime);
     // Seek after the player loads.
     const t = setTimeout(() => {
       playerRef.current?.seekTo?.(initial.currentTime);
@@ -54,6 +56,7 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
       setUrl(p.videoState.url);
       setPlaying(p.videoState.playing);
       currentTimeRef.current = p.videoState.currentTime;
+      setCurrentTime(p.videoState.currentTime);
       playerRef.current?.seekTo?.(p.videoState.currentTime);
       // Release the lock on the next tick.
       queueMicrotask(() => {
@@ -64,6 +67,7 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     const onSeek = (p: { currentTime: number }) => {
       applyingRemote.current = true;
       currentTimeRef.current = p.currentTime;
+      setCurrentTime(p.currentTime);
       playerRef.current?.seekTo?.(p.currentTime);
       queueMicrotask(() => {
         applyingRemote.current = false;
@@ -85,13 +89,14 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     (newUrl: string) => {
       setUrl(newUrl);
       currentTimeRef.current = 0;
+      setCurrentTime(0);
       const next: VideoState = {
         url: newUrl,
         playing: true,
         currentTime: 0,
       };
       setPlaying(true);
-      socket.emit("video:state", next);
+      socket.emit("video:state", { videoState: next });
     },
     [socket],
   );
@@ -100,9 +105,11 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     setPlaying((p) => {
       const next = !p;
       socket.emit("video:state", {
-        url,
-        playing: next,
-        currentTime: currentTimeRef.current,
+        videoState: {
+          url,
+          playing: next,
+          currentTime: currentTimeRef.current,
+        },
       });
       return next;
     });
@@ -111,6 +118,7 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
   const seek = useCallback(
     (seconds: number) => {
       currentTimeRef.current = seconds;
+      setCurrentTime(seconds);
       playerRef.current?.seekTo?.(seconds);
       socket.emit("video:seek", { currentTime: seconds });
     },
@@ -122,12 +130,13 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
   const onProgress = useCallback((seconds: number) => {
     if (applyingRemote.current) return;
     currentTimeRef.current = seconds;
+    setCurrentTime(seconds);
   }, []);
 
   return {
     url,
     playing,
-    currentTime: currentTimeRef.current,
+    currentTime,
     loadUrl,
     togglePlay,
     seek,

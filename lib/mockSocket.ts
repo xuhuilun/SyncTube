@@ -5,6 +5,7 @@ import type {
   Room,
   ServerToClientEvents,
   VideoState,
+  VideoStatePayload,
 } from "@/types";
 
 /**
@@ -210,8 +211,8 @@ export class MockSocket {
         break;
       }
       case "video:state": {
-        const [state] = args as unknown as [VideoState];
-        this.handleVideoState(state);
+        const [payload] = args as unknown as [VideoStatePayload];
+        this.handleVideoState(payload.videoState);
         break;
       }
       case "video:seek": {

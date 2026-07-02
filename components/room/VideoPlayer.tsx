@@ -9,7 +9,7 @@ interface VideoPlayerProps {
   playing: boolean;
   onProgress?: (seconds: number) => void;
   onDuration?: (seconds: number) => void;
-  playerRef: React.MutableRefObject<{ seekTo?: (s: number) => void } | null>;
+  playerRef: React.RefObject<{ seekTo?: (s: number) => void } | null>;
 }
 
 /**

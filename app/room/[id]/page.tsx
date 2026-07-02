@@ -104,6 +104,7 @@ export default function RoomPage() {
             url={video.url}
             playing={video.playing}
             currentTime={video.currentTime}
+            duration={duration}
             onUrlSubmit={video.loadUrl}
             onTogglePlay={video.togglePlay}
             onSeek={video.seek}
