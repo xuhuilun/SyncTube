@@ -1,3 +1,4 @@
+import { io, type Socket } from "socket.io-client";
 import type {
   ClientToServerEvents,
   JoinAck,
@@ -7,6 +8,8 @@ import type {
   VideoState,
   VideoStatePayload,
 } from "@/types";
+
+type SyncSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 /**
  * Mock socket layer.
@@ -298,11 +301,20 @@ export class MockSocket {
   }
 }
 
-let singleton: MockSocket | null = null;
+let singleton: SyncSocket | null = null;
 
-export function getSocket(): MockSocket {
+export function getSocket(): SyncSocket {
+  if (typeof window === "undefined") {
+    // SSR fallback: never used for actual I/O, just needs to satisfy the type.
+    return new MockSocket() as unknown as SyncSocket;
+  }
   if (!singleton) {
-    singleton = new MockSocket();
+    // Connect to the same origin — the custom server (server.mjs) serves
+    // both Next.js and Socket.IO on the same port.
+    singleton = io(window.location.origin, {
+      autoConnect: false, // match mock: connect() must be called explicitly
+      reconnection: true,
+    });
   }
   return singleton;
 }
