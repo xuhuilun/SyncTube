@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft, ShareNetwork } from "@phosphor-icons/react";
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { useRoom } from "@/hooks/useRoom";
 import { useVideoSync } from "@/hooks/useVideoSync";
 import { useToast } from "@/components/ui/Toast";
+import { isBilibili } from "@/lib/video";
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -33,6 +34,34 @@ export default function RoomPage() {
     initial: room.videoState,
     playerRef,
   });
+
+  // Bilibili 1080P: resolve video URL to a direct stream URL via server API.
+  const [bilibiliStreamUrl, setBilibiliStreamUrl] = useState<string | null>(null);
+  const [biliLoggedIn, setBiliLoggedIn] = useState(false);
+
+  useEffect(() => {
+    if (!video.url || !isBilibili(video.url)) {
+      setBilibiliStreamUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setBilibiliStreamUrl(null);
+    fetch(`/api/bilibili/resolve?url=${encodeURIComponent(video.url)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.streamUrl) {
+          setBilibiliStreamUrl(data.streamUrl);
+          setBiliLoggedIn(data.loggedIn);
+        }
+      })
+      .catch(() => {
+        // Fall back to iframe if resolve fails
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [video.url, biliLoggedIn]);
 
   if (!nickname) {
     return <NicknameGate roomId={roomId} onJoin={setNickname} />;
@@ -95,6 +124,7 @@ export default function RoomPage() {
         >
           <VideoPlayer
             url={video.url}
+            streamUrl={bilibiliStreamUrl}
             playing={video.playing}
             onProgress={video.onProgress}
             onDuration={setDuration}
@@ -105,6 +135,8 @@ export default function RoomPage() {
             playing={video.playing}
             currentTime={video.currentTime}
             duration={duration}
+            biliLoggedIn={biliLoggedIn}
+            onBiliLogin={() => setBiliLoggedIn(true)}
             onUrlSubmit={video.loadUrl}
             onTogglePlay={video.togglePlay}
             onSeek={video.seek}

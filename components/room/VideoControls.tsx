@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Pause, Play, LinkSimple, Warning } from "@phosphor-icons/react";
+import { Pause, Play, LinkSimple, Warning, CheckCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { BilibiliLogin } from "@/components/room/BilibiliLogin";
 import { formatTime, isBilibili } from "@/lib/video";
 
 interface VideoControlsProps {
@@ -11,6 +12,8 @@ interface VideoControlsProps {
   playing: boolean;
   currentTime: number;
   duration?: number;
+  biliLoggedIn?: boolean;
+  onBiliLogin?: () => void;
   onUrlSubmit: (url: string) => void;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
@@ -21,6 +24,8 @@ export function VideoControls({
   playing,
   currentTime,
   duration = 0,
+  biliLoggedIn = false,
+  onBiliLogin,
   onUrlSubmit,
   onTogglePlay,
   onSeek,
@@ -35,6 +40,7 @@ export function VideoControls({
   };
 
   const bilibili = isBilibili(url);
+  const biliSynced = bilibili && biliLoggedIn;
 
   return (
     <div className="flex flex-col gap-3">
@@ -51,18 +57,37 @@ export function VideoControls({
         </Button>
       </form>
 
+      {/* Bilibili login / status */}
       {bilibili && (
+        <div className="flex items-center gap-3">
+          {biliLoggedIn ? (
+            <span className="flex items-center gap-1 text-xs text-green-400">
+              <CheckCircle size={14} weight="fill" />
+              B站已登录 1080P
+            </span>
+          ) : (
+            <>
+              <BilibiliLogin onLogin={() => onBiliLogin?.()} />
+              <span className="text-xs text-zinc-600">未登录仅 480P</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Warning: only for iframe mode (not logged in or b23.tv) */}
+      {bilibili && !biliSynced && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200/80">
           <Warning size={15} weight="fill" className="mt-0.5 shrink-0" />
           <span>
             {/b23\.tv\//i.test(url)
               ? "b23.tv 短链接无法直接内嵌，请使用完整的 bilibili.com/video/ 链接。"
-              : "B站视频通过内嵌方式播放，受平台限制无法精确同步播放、暂停和进度。两端加载同一视频即可。"}
+              : "未登录B站，使用内嵌方式播放，无法精确同步播放、暂停和进度。登录后可享受1080P并支持同步控制。"}
           </span>
         </div>
       )}
 
-      {url && !bilibili && (
+      {/* Play/pause + progress: show for non-Bilibili, or Bilibili when logged in (react-player with sync) */}
+      {url && (!bilibili || biliSynced) && (
         <div className="flex items-center gap-3">
           <Button
             size="icon"

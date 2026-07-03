@@ -6,6 +6,7 @@ import { getBilibiliEmbed } from "@/lib/video";
 
 interface VideoPlayerProps {
   url: string;
+  streamUrl?: string | null;
   playing: boolean;
   onProgress?: (seconds: number) => void;
   onDuration?: (seconds: number) => void;
@@ -14,12 +15,13 @@ interface VideoPlayerProps {
 
 /**
  * Renders react-player for supported formats, and falls back to a Bilibili
- * iframe for B站 URLs. The iframe path cannot be controlled programmatically,
- * so sync is best-effort: both tabs load the same video, but play/pause/seek
- * do not propagate. The UI surfaces this limitation to the user.
+ * iframe for B站 URLs. When streamUrl is provided (resolved via Bilibili API
+ * with login), react-player is used instead of the iframe, enabling full
+ * play/pause/seek sync for Bilibili videos.
  */
 export function VideoPlayer({
   url,
+  streamUrl,
   playing,
   onProgress,
   onDuration,
@@ -35,9 +37,11 @@ export function VideoPlayer({
     }
   }, [playerRef]);
 
-  const bilibiliEmbed = getBilibiliEmbed(url);
+  // If we have a resolved stream URL, use it directly (bypass iframe).
+  const playUrl = streamUrl ?? url;
+  const bilibiliEmbed = streamUrl ? null : getBilibiliEmbed(url);
 
-  if (!url) {
+  if (!playUrl) {
     return (
       <div className="aspect-video w-full rounded-2xl glass flex items-center justify-center text-zinc-500">
         <div className="text-center px-6">
@@ -75,7 +79,7 @@ export function VideoPlayer({
             };
           }
         }}
-        url={url}
+        url={playUrl}
         playing={playing}
         controls
         width="100%"
