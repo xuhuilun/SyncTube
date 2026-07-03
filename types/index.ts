@@ -38,16 +38,25 @@ export interface JoinAck {
   users: OnlineUser[];
   videoState: VideoState;
   messages: ChatMessage[];
+  isHost: boolean;
+  hostId: string;
 }
 
 export interface UserJoinedPayload {
   user: OnlineUser;
   users: OnlineUser[];
+  hostId: string;
 }
 
 export interface UserLeftPayload {
   socketId: string;
   users: OnlineUser[];
+  hostId: string;
+}
+
+export interface HostChangedPayload {
+  hostId: string;
+  hostNickname: string;
 }
 
 export interface ChatPayload {
@@ -72,6 +81,7 @@ export type ServerToClientEvents = {
   "chat:message": (payload: ChatPayload) => void;
   "video:state": (payload: VideoStatePayload) => void;
   "video:seek": (payload: SeekPayload) => void;
+  "host:changed": (payload: HostChangedPayload) => void;
 };
 
 export type ClientToServerEvents = {
@@ -79,4 +89,5 @@ export type ClientToServerEvents = {
   "chat:send": (payload: { content: string }) => void;
   "video:state": (payload: VideoStatePayload) => void;
   "video:seek": (payload: { currentTime: number }) => void;
+  "video:resync": () => void;
 };

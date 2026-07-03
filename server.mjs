@@ -69,6 +69,7 @@ app.prepare().then(() => {
           users: new Map(),
           videoState: { url: "", playing: false, currentTime: 0 },
           messages: [],
+          hostId: socket.id,
         };
         rooms.set(roomId, room);
       }
@@ -81,12 +82,15 @@ app.prepare().then(() => {
         users: Array.from(room.users.values()),
         videoState: { ...room.videoState },
         messages: room.messages.slice(-MAX_MESSAGES),
+        isHost: room.hostId === socket.id,
+        hostId: room.hostId,
       });
 
       // Notify everyone else in the room.
       socket.to(roomId).emit("user:joined", {
         user: { ...user },
         users: Array.from(room.users.values()),
+        hostId: room.hostId,
       });
     });
 
@@ -112,13 +116,13 @@ app.prepare().then(() => {
     });
 
     // ---- video:state ----
-    // Client sends { videoState: { url, playing, currentTime } }.
-    // Server stores it and relays to everyone EXCEPT sender
-    // (sender already applied it locally).
+    // Only host can broadcast state changes. Server stores and relays to
+    // everyone EXCEPT sender (sender already applied it locally).
     socket.on("video:state", ({ videoState }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
+      if (socket.id !== room.hostId) return;
       room.videoState = { ...videoState };
       socket.to(currentRoom).emit("video:state", { videoState });
     });
@@ -128,8 +132,18 @@ app.prepare().then(() => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
+      if (socket.id !== room.hostId) return;
       room.videoState.currentTime = currentTime;
       socket.to(currentRoom).emit("video:seek", { currentTime });
+    });
+
+    // ---- video:resync ----
+    // Member requests current host state; server responds to requester only.
+    socket.on("video:resync", () => {
+      if (!currentRoom) return;
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+      socket.emit("video:state", { videoState: { ...room.videoState } });
     });
 
     // ---- disconnect ----
@@ -138,9 +152,22 @@ app.prepare().then(() => {
       const room = rooms.get(currentRoom);
       if (!room) return;
       room.users.delete(socket.id);
+
+      // If host left, transfer to next remaining user.
+      if (room.hostId === socket.id && room.users.size > 0) {
+        const nextHostId = Array.from(room.users.keys())[0];
+        room.hostId = nextHostId;
+        const newHost = room.users.get(nextHostId);
+        io.to(currentRoom).emit("host:changed", {
+          hostId: nextHostId,
+          hostNickname: newHost?.nickname || "匿名用户",
+        });
+      }
+
       socket.to(currentRoom).emit("user:left", {
         socketId: socket.id,
         users: Array.from(room.users.values()),
+        hostId: room.hostId,
       });
       if (room.users.size === 0) {
         rooms.delete(currentRoom);

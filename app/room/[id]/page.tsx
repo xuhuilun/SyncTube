@@ -33,6 +33,7 @@ export default function RoomPage() {
     roomId: effectiveRoomId,
     initial: room.videoState,
     playerRef,
+    isHost: room.isHost,
   });
 
   // Bilibili 1080P: resolve video URL to a direct stream URL via server API.
@@ -104,7 +105,9 @@ export default function RoomPage() {
           </Button>
           <div className="flex flex-col">
             <span className="text-sm font-semibold text-white">房间 {roomId}</span>
-            <span className="text-xs text-zinc-500">{room.users.length} 人在线</span>
+            <span className="text-xs text-zinc-500">
+              {room.users.length} 人在线{room.isHost ? " · 你是房主" : ""}
+            </span>
           </div>
         </div>
         <Button variant="secondary" size="sm" onClick={shareLink}>
@@ -136,19 +139,23 @@ export default function RoomPage() {
             currentTime={video.currentTime}
             duration={duration}
             biliLoggedIn={biliLoggedIn}
+            isHost={room.isHost}
             onBiliLogin={() => setBiliLoggedIn(true)}
             onUrlSubmit={video.loadUrl}
             onTogglePlay={video.togglePlay}
             onSeek={video.seek}
+            onResync={video.resync}
           />
           {/* Users */}
           <div className="glass rounded-2xl p-4">
             <p className="text-xs text-zinc-500 mb-3">在线用户</p>
-            <UserList users={room.users} selfId={room.socketId} />
+            <UserList users={room.users} selfId={room.socketId} hostId={room.hostId} />
           </div>
           {duration > 0 && (
             <p className="text-xs text-zinc-600">
-              提示：拖动播放器进度条会同步到房间内所有人。
+              {room.isHost
+                ? "提示：你的播放控制会同步到房间内所有成员。"
+                : "提示：你的操作仅本地生效，点击「同步到房主」对齐进度。"}
             </p>
           )}
         </motion.section>

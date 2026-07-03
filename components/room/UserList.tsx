@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { User } from "@phosphor-icons/react";
+import { Crown, User } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import type { OnlineUser } from "@/types";
@@ -9,14 +9,16 @@ import type { OnlineUser } from "@/types";
 interface UserListProps {
   users: OnlineUser[];
   selfId: string | null;
+  hostId: string | null;
 }
 
-export function UserList({ users, selfId }: UserListProps) {
+export function UserList({ users, selfId, hostId }: UserListProps) {
   return (
     <div className="flex flex-wrap gap-2">
       <AnimatePresence initial={false}>
         {users.map((u) => {
           const isSelf = u.socketId === selfId;
+          const isHost = u.socketId === hostId;
           return (
             <motion.div
               key={u.socketId}
@@ -31,8 +33,15 @@ export function UserList({ users, selfId }: UserListProps) {
                   isSelf && "border-accent/30 text-accent bg-accent/10",
                 )}
               >
-                <User size={13} weight="fill" />
+                {isHost ? (
+                  <Crown size={13} weight="fill" className="text-amber-400" />
+                ) : (
+                  <User size={13} weight="fill" />
+                )}
                 {u.nickname}
+                {isHost && (
+                  <span className="text-[10px] text-amber-400/70 ml-0.5">房主</span>
+                )}
                 {isSelf && (
                   <span className="text-[10px] text-accent/70 ml-0.5">你</span>
                 )}

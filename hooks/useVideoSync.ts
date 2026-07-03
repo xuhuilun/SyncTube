@@ -19,15 +19,21 @@ interface UseVideoSyncArgs {
   playerRef: React.RefObject<{
     seekTo?: (seconds: number) => void;
   } | null>;
+  isHost: boolean;
 }
 
-export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
+export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyncArgs) {
   const [url, setUrl] = useState<string>(initial?.url ?? "");
   const [playing, setPlaying] = useState<boolean>(initial?.playing ?? false);
   // currentTime: ref for callback access, state for reactivity (time display / progress bar).
   const currentTimeRef = useRef<number>(initial?.currentTime ?? 0);
   const [currentTime, setCurrentTime] = useState<number>(initial?.currentTime ?? 0);
   const applyingRemote = useRef(false);
+  const isHostRef = useRef(isHost);
+
+  useEffect(() => {
+    isHostRef.current = isHost;
+  }, [isHost]);
 
   // Apply initial state once the room syncs.
   useEffect(() => {
@@ -83,7 +89,9 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ---- Local user actions (broadcast to others) ----
+  // ---- Local user actions ----
+  // Host: actions broadcast to all members via server.
+  // Member: actions are local-only (no broadcast). Use resync() to re-sync.
 
   const loadUrl = useCallback(
     (newUrl: string) => {
@@ -96,7 +104,9 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
         currentTime: 0,
       };
       setPlaying(true);
-      socket.emit("video:state", { videoState: next });
+      if (isHostRef.current) {
+        socket.emit("video:state", { videoState: next });
+      }
     },
     [socket],
   );
@@ -104,13 +114,15 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
   const togglePlay = useCallback(() => {
     setPlaying((p) => {
       const next = !p;
-      socket.emit("video:state", {
-        videoState: {
-          url,
-          playing: next,
-          currentTime: currentTimeRef.current,
-        },
-      });
+      if (isHostRef.current) {
+        socket.emit("video:state", {
+          videoState: {
+            url,
+            playing: next,
+            currentTime: currentTimeRef.current,
+          },
+        });
+      }
       return next;
     });
   }, [socket, url]);
@@ -120,10 +132,17 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
       currentTimeRef.current = seconds;
       setCurrentTime(seconds);
       playerRef.current?.seekTo?.(seconds);
-      socket.emit("video:seek", { currentTime: seconds });
+      if (isHostRef.current) {
+        socket.emit("video:seek", { currentTime: seconds });
+      }
     },
     [socket],
   );
+
+  // Member requests current host state from server.
+  const resync = useCallback(() => {
+    socket.emit("video:resync");
+  }, [socket]);
 
   // Called by the player on its natural time updates. Does NOT broadcast;
   // only keeps our local time ref fresh so a later toggle/seek is accurate.
@@ -141,5 +160,6 @@ export function useVideoSync({ roomId, initial, playerRef }: UseVideoSyncArgs) {
     togglePlay,
     seek,
     onProgress,
+    resync,
   };
 }

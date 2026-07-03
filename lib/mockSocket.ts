@@ -241,6 +241,8 @@ export class MockSocket {
       users: Array.from(room.users.values()),
       videoState: { ...room.videoState },
       messages: room.messages.slice(-MAX_MESSAGES),
+      isHost: true,
+      hostId: this.id,
     };
     this.emitLocal("room:joined", ack);
 
