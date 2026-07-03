@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/Button";
@@ -15,6 +15,11 @@ interface NicknameGateProps {
 
 export function NicknameGate({ roomId, onJoin }: NicknameGateProps) {
   const [name, setName] = useState("");
+  const [placeholder, setPlaceholder] = useState("匿名用户");
+
+  useEffect(() => {
+    setPlaceholder(defaultNickname());
+  }, []);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +44,7 @@ export function NicknameGate({ roomId, onJoin }: NicknameGateProps) {
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={defaultNickname()}
+              placeholder={placeholder}
               maxLength={16}
               autoFocus
               aria-label="昵称"
