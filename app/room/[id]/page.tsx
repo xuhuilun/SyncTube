@@ -1,20 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, ShareNetwork } from "@phosphor-icons/react";
+import { ArrowLeft } from "@phosphor-icons/react";
 import { NicknameGate } from "@/components/room/NicknameGate";
 import { VideoPlayer } from "@/components/room/VideoPlayer";
 import { VideoControls } from "@/components/room/VideoControls";
 import { ChatPanel } from "@/components/room/ChatPanel";
 import { UserList } from "@/components/room/UserList";
+import { InviteButton } from "@/components/room/InviteButton";
 import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 import { useRoom } from "@/hooks/useRoom";
 import { useVideoSync } from "@/hooks/useVideoSync";
-import { useToast } from "@/components/ui/Toast";
-import { isBilibili } from "@/lib/video";
+import { formatBiliQuality, isBilibili } from "@/lib/video";
 import { loadBiliAuth, clearBiliAuth, getBiliSessdataHeader } from "@/lib/biliAuth";
+
+interface BilibiliResolveResponse {
+  streamUrl?: string;
+  loggedIn?: boolean;
+  quality?: number;
+  acceptQualities?: number[];
+  error?: string;
+}
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -40,6 +49,11 @@ export default function RoomPage() {
   // Bilibili 1080P: resolve video URL to a direct stream URL via server API.
   const [bilibiliStreamUrl, setBilibiliStreamUrl] = useState<string | null>(null);
   const [biliLoggedIn, setBiliLoggedIn] = useState(false);
+  const [biliQuality, setBiliQuality] = useState<number | null>(null);
+  const [biliQualities, setBiliQualities] = useState<number[]>([]);
+  const [biliQualityLoading, setBiliQualityLoading] = useState(false);
+  const pendingQualitySeekRef = useRef<number | null>(null);
+  const biliResolveSeqRef = useRef(0);
 
   // Auto-login: check localStorage for saved Bilibili credentials on mount
   useEffect(() => {
@@ -47,36 +61,95 @@ export default function RoomPage() {
     if (auth) setBiliLoggedIn(true);
   }, []);
 
+  const resolveBilibiliStream = useCallback(
+    async (quality?: number, restoreTime?: number) => {
+      const resolveId = ++biliResolveSeqRef.current;
+      const query = new URLSearchParams({ url: video.url });
+      if (quality) {
+        query.set("quality", String(quality));
+      }
+
+      const headers = getBiliSessdataHeader();
+      const res = await fetch(`/api/bilibili/resolve?${query.toString()}`, { headers });
+      const data = (await res.json()) as BilibiliResolveResponse;
+      if (!res.ok || data.error || !data.streamUrl) {
+        throw new Error(data.error ?? "Resolve failed");
+      }
+      if (resolveId !== biliResolveSeqRef.current) {
+        throw new Error("Stale resolve");
+      }
+
+      if (restoreTime != null) {
+        pendingQualitySeekRef.current = restoreTime;
+      }
+      setBilibiliStreamUrl(data.streamUrl);
+      setBiliLoggedIn(!!data.loggedIn);
+      setBiliQuality(data.quality ?? null);
+      setBiliQualities(data.acceptQualities ?? []);
+
+      // If we had auth but the server says not logged in, SESSDATA is stale.
+      if (!data.loggedIn && headers["x-bili-sessdata"]) {
+        clearBiliAuth();
+      }
+
+      return data;
+    },
+    [video.url],
+  );
+
   // Bilibili 1080P: resolve video URL to a direct stream URL via server API.
   // Passes SESSDATA from localStorage via header; clears stale auth if expired.
   useEffect(() => {
     if (!video.url || !isBilibili(video.url)) {
+      biliResolveSeqRef.current += 1;
       setBilibiliStreamUrl(null);
+      setBiliQuality(null);
+      setBiliQualities([]);
       return;
     }
     let cancelled = false;
     setBilibiliStreamUrl(null);
-    const headers = getBiliSessdataHeader();
-    fetch(`/api/bilibili/resolve?url=${encodeURIComponent(video.url)}`, { headers })
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (data.streamUrl) {
-          setBilibiliStreamUrl(data.streamUrl);
-          setBiliLoggedIn(data.loggedIn);
-          // If we had auth but the server says not logged in, SESSDATA is stale
-          if (!data.loggedIn && headers["x-bili-sessdata"]) {
-            clearBiliAuth();
-          }
+    setBiliQualityLoading(true);
+
+    resolveBilibiliStream()
+      .catch(() => {
+        if (!cancelled) {
+          setBiliQuality(null);
+          setBiliQualities([]);
         }
       })
-      .catch(() => {
-        // Fall back to iframe if resolve fails
+      .finally(() => {
+        if (!cancelled) {
+          setBiliQualityLoading(false);
+        }
       });
+
     return () => {
       cancelled = true;
     };
-  }, [video.url, biliLoggedIn]);
+  }, [video.url, biliLoggedIn, resolveBilibiliStream]);
+
+  const switchBiliQuality = async (quality: number) => {
+    if (!video.url || quality === biliQuality) return;
+    setBiliQualityLoading(true);
+    try {
+      const data = await resolveBilibiliStream(quality, video.currentTime);
+      toast(`已切换到 ${formatBiliQuality(data.quality ?? quality)}`);
+    } catch {
+      toast("清晰度切换失败，请稍后重试");
+    } finally {
+      setBiliQualityLoading(false);
+    }
+  };
+
+  const handlePlayerReady = () => {
+    video.onReady();
+    const pendingSeek = pendingQualitySeekRef.current;
+    if (pendingSeek != null) {
+      playerRef.current?.seekTo?.(pendingSeek);
+      pendingQualitySeekRef.current = null;
+    }
+  };
 
   if (!nickname) {
     return <NicknameGate roomId={roomId} onJoin={setNickname} />;
@@ -89,20 +162,6 @@ export default function RoomPage() {
       </main>
     );
   }
-
-  const shareLink = async () => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "SyncTube 房间", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        toast("房间链接已复制");
-      }
-    } catch {
-      toast("分享失败，请手动复制链接");
-    }
-  };
 
   return (
     <main className="min-h-[100dvh] flex flex-col">
@@ -124,10 +183,7 @@ export default function RoomPage() {
             </span>
           </div>
         </div>
-        <Button variant="secondary" size="sm" onClick={shareLink}>
-          <ShareNetwork size={15} weight="bold" />
-          邀请
-        </Button>
+        <InviteButton roomId={roomId} />
       </header>
 
       {/* Body: video + chat. Chat goes right on desktop, below on mobile. */}
@@ -145,7 +201,7 @@ export default function RoomPage() {
             playing={video.playing}
             onProgress={video.onProgress}
             onDuration={setDuration}
-            onReady={video.onReady}
+            onReady={handlePlayerReady}
             playerRef={playerRef}
           />
           <VideoControls
@@ -154,8 +210,12 @@ export default function RoomPage() {
             currentTime={video.currentTime}
             duration={duration}
             biliLoggedIn={biliLoggedIn}
+            biliQuality={biliQuality}
+            biliQualities={biliQualities}
+            biliQualityLoading={biliQualityLoading}
             isHost={room.isHost}
             onBiliLogin={() => setBiliLoggedIn(true)}
+            onBiliQualityChange={switchBiliQuality}
             onUrlSubmit={video.loadUrl}
             onTogglePlay={video.togglePlay}
             onSeek={video.seek}

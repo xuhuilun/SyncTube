@@ -1,11 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ArrowsClockwise, Pause, Play, LinkSimple, Warning, CheckCircle } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  CaretDown,
+  CheckCircle,
+  LinkSimple,
+  Pause,
+  Play,
+  SpinnerGap,
+  Warning,
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { BilibiliLogin } from "@/components/room/BilibiliLogin";
-import { formatTime, isBilibili } from "@/lib/video";
+import { formatBiliQuality, formatTime, isBilibili } from "@/lib/video";
 import { loadBiliUser } from "@/lib/biliAuth";
 
 interface VideoControlsProps {
@@ -14,8 +23,12 @@ interface VideoControlsProps {
   currentTime: number;
   duration?: number;
   biliLoggedIn?: boolean;
+  biliQuality?: number | null;
+  biliQualities?: number[];
+  biliQualityLoading?: boolean;
   isHost: boolean;
   onBiliLogin?: () => void;
+  onBiliQualityChange?: (quality: number) => void;
   onUrlSubmit: (url: string) => void;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
@@ -28,8 +41,12 @@ export function VideoControls({
   currentTime,
   duration = 0,
   biliLoggedIn = false,
+  biliQuality = null,
+  biliQualities = [],
+  biliQualityLoading = false,
   isHost,
   onBiliLogin,
+  onBiliQualityChange,
   onUrlSubmit,
   onTogglePlay,
   onSeek,
@@ -37,6 +54,7 @@ export function VideoControls({
 }: VideoControlsProps) {
   const [draft, setDraft] = useState("");
   const [biliUserName, setBiliUserName] = useState<string | null>(null);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
 
   useEffect(() => {
     if (biliLoggedIn) {
@@ -56,6 +74,8 @@ export function VideoControls({
 
   const bilibili = isBilibili(url);
   const biliSynced = bilibili && biliLoggedIn;
+  const canSwitchBiliQuality =
+    bilibili && biliQualities.length > 1 && !!onBiliQualityChange && !biliQualityLoading;
 
   return (
     <div className="flex flex-col gap-3">
@@ -76,7 +96,7 @@ export function VideoControls({
 
       {/* Bilibili login / status */}
       {bilibili && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {biliLoggedIn ? (
             <span className="flex items-center gap-1 text-xs text-green-400">
               <CheckCircle size={14} weight="fill" />
@@ -88,6 +108,47 @@ export function VideoControls({
               <span className="text-xs text-zinc-600">未登录仅 480P</span>
             </>
           )}
+
+          <div className="relative">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="min-w-24"
+              onClick={() => canSwitchBiliQuality && setQualityMenuOpen((open) => !open)}
+              disabled={!canSwitchBiliQuality}
+              title={
+                biliQualities.length <= 1 ? "当前视频仅支持一种清晰度" : "切换清晰度"
+              }
+            >
+              {biliQualityLoading ? (
+                <SpinnerGap size={15} className="animate-spin" />
+              ) : (
+                formatBiliQuality(biliQuality)
+              )}
+              <CaretDown size={14} />
+            </Button>
+
+            {qualityMenuOpen && canSwitchBiliQuality && (
+              <div className="absolute left-0 top-11 z-30 min-w-36 overflow-hidden rounded-xl border border-border-subtle bg-surface-800/95 shadow-glass">
+                {biliQualities.map((quality) => (
+                  <button
+                    key={quality}
+                    type="button"
+                    onClick={() => {
+                      setQualityMenuOpen(false);
+                      onBiliQualityChange?.(quality);
+                    }}
+                    className="flex h-10 w-full items-center justify-between px-3 text-left text-sm text-zinc-100 transition-colors hover:bg-white/10 disabled:text-accent"
+                    disabled={quality === biliQuality}
+                  >
+                    <span>{formatBiliQuality(quality)}</span>
+                    {quality === biliQuality && <CheckCircle size={14} weight="fill" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

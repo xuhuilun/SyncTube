@@ -38,3 +38,23 @@ export function formatTime(seconds: number): string {
   }
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+const BILI_QUALITY_LABELS: Record<number, string> = {
+  127: "8K",
+  126: "杜比视界",
+  125: "HDR",
+  120: "4K",
+  116: "1080P 60帧",
+  112: "1080P 高码率",
+  80: "1080P",
+  74: "720P 60帧",
+  64: "720P",
+  32: "480P",
+  16: "360P",
+  6: "240P",
+};
+
+export function formatBiliQuality(quality: number | null | undefined): string {
+  if (!quality) return "清晰度";
+  return BILI_QUALITY_LABELS[quality] ?? `${quality}P`;
+}

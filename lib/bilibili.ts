@@ -58,7 +58,9 @@ interface PlayUrlResponse {
       size: number;
       length: number;
     }>;
+    quality?: number;
     accept_quality: number[];
+    accept_description?: string[];
   };
 }
 
@@ -75,6 +77,8 @@ export interface ResolvedVideo {
   cover: string;
   duration: number;
   quality: number;
+  acceptQualities: number[];
+  acceptDescriptions: string[];
   loggedIn: boolean;
 }
 
@@ -234,9 +238,10 @@ async function getVideoInfo(
 export async function resolveBilibiliVideo(
   bvid: string,
   sessdata?: string,
+  quality?: number,
 ): Promise<ResolvedVideo> {
   const info = await getVideoInfo(bvid, sessdata);
-  const qn = sessdata ? 80 : 32; // 1080P if logged in, 480P otherwise
+  const qn = quality ?? (sessdata ? 80 : 32); // 1080P if logged in, 480P otherwise
 
   const res = await fetch(
     `${BILIBILI_API}/x/player/playurl?bvid=${bvid}&cid=${info.cid}&qn=${qn}&fnval=0`,
@@ -252,7 +257,9 @@ export async function resolveBilibiliVideo(
     title: info.title,
     cover: info.pic,
     duration: info.duration,
-    quality: qn,
+    quality: json.data.quality ?? qn,
+    acceptQualities: json.data.accept_quality ?? [json.data.quality ?? qn],
+    acceptDescriptions: json.data.accept_description ?? [],
     loggedIn: !!sessdata,
   };
 }

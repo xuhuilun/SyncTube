@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { QRCodeCanvas, QRCodeSVG } from "qrcode.react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, CheckCircle, Spinner, Warning, SpinnerGap } from "@phosphor-icons/react";
+import { X, CheckCircle, Spinner, Warning, SpinnerGap, QrCode, DeviceMobile } from "@phosphor-icons/react";
+import { useToast } from "@/components/ui/Toast";
 import { saveBiliAuth, saveBiliUser, fetchBiliUser, type BiliAuth, type BiliUser } from "@/lib/biliAuth";
 
 type LoginStatus =
@@ -16,6 +17,8 @@ type LoginStatus =
   | "expired"
   | "error";
 
+type LoginMode = "choice" | "qr";
+
 interface BilibiliLoginProps {
   onLogin: () => void;
 }
@@ -24,14 +27,28 @@ const POLL_INTERVAL = 1500; // 1.5s — faster feedback than the old 2s
 const QR_TIMEOUT = 180_000; // 3 min auto-expire
 
 export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
+  const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [loginMode, setLoginMode] = useState<LoginMode>("qr");
+  const [isMobile, setIsMobile] = useState(false);
   const [status, setStatus] = useState<LoginStatus>("idle");
   const [qrUrl, setQrUrl] = useState("");
   const [qrcodeKey, setQrcodeKey] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const ua = navigator.userAgent;
+    setIsMobile(
+      /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+        window.matchMedia?.("(pointer: coarse)").matches ||
+        false,
+    );
+  }, []);
 
   const startLogin = useCallback(async () => {
+    setLoginMode("qr");
     setStatus("loading");
     setQrUrl("");
     setQrcodeKey("");
@@ -43,10 +60,46 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
       setQrcodeKey(data.qrcodeKey);
       startTimeRef.current = Date.now();
       setStatus("waiting");
+      return data as { qrUrl: string; qrcodeKey: string };
     } catch {
       setStatus("error");
+      return null;
     }
   }, []);
+
+  const saveQrImage = async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+
+    const canvas = qrCanvasRef.current;
+    if (!canvas) {
+      throw new Error("QR canvas unavailable");
+    }
+
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = "bilibili-login-qr.png";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const openBilibiliAppLogin = async () => {
+    const qr = qrUrl ? { qrUrl, qrcodeKey } : await startLogin();
+    if (!qr?.qrUrl) return;
+
+    try {
+      await saveQrImage();
+      toast("已尝试保存二维码，即将打开 B站扫一扫");
+    } catch {
+      toast("二维码保存失败，已继续尝试打开 B站扫一扫");
+    }
+
+    window.location.href = "bilibili://qrcode";
+    window.setTimeout(() => {
+      toast("如未打开 B站，请使用扫码登录或在系统浏览器中重试");
+    }, 1200);
+  };
 
   // Handle poll success: save credentials → fetch user → notify parent
   const handleSuccess = useCallback(
@@ -133,6 +186,7 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
 
   const closeModal = () => {
     setOpen(false);
+    setLoginMode("qr");
     setStatus("idle");
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -140,13 +194,22 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
     }
   };
 
+  const openModal = () => {
+    setOpen(true);
+    if (isMobile) {
+      setLoginMode("choice");
+      setStatus("idle");
+      setQrUrl("");
+      setQrcodeKey("");
+      return;
+    }
+    void startLogin();
+  };
+
   return (
     <>
       <button
-        onClick={() => {
-          setOpen(true);
-          startLogin();
-        }}
+        onClick={openModal}
         className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
       >
         B站扫码登录
@@ -178,12 +241,44 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
               </button>
 
               <h3 className="text-sm font-semibold text-white mb-4 text-center">
-                B站扫码登录
+                {isMobile && loginMode === "choice" ? "选择 B站登录方式" : "B站扫码登录"}
               </h3>
 
               <div className="flex flex-col items-center gap-4">
+                {isMobile && loginMode === "choice" && (
+                  <div className="grid w-full gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void startLogin()}
+                      className="glass flex min-h-14 items-center gap-3 rounded-xl px-4 text-left transition-colors hover:bg-white/10"
+                    >
+                      <QrCode size={22} className="text-blue-400" weight="bold" />
+                      <span>
+                        <span className="block text-sm text-white">扫码登录</span>
+                        <span className="block text-xs text-zinc-500">继续使用二维码完成登录</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openBilibiliAppLogin()}
+                      className="glass flex min-h-14 items-center gap-3 rounded-xl px-4 text-left transition-colors hover:bg-white/10"
+                    >
+                      <DeviceMobile size={22} className="text-blue-400" weight="bold" />
+                      <span>
+                        <span className="block text-sm text-white">打开 B站 APP</span>
+                        <span className="block text-xs text-zinc-500">
+                          保存二维码后打开扫一扫
+                        </span>
+                      </span>
+                    </button>
+                    <p className="text-center text-xs text-zinc-600">
+                      微信等内置浏览器可能无法直接打开 APP，可改用扫码登录。
+                    </p>
+                  </div>
+                )}
+
                 {/* Loading: fetching QR */}
-                {status === "loading" && (
+                {loginMode === "qr" && status === "loading" && (
                   <div className="flex flex-col items-center gap-2 py-8">
                     <Spinner size={28} className="animate-spin text-blue-400" />
                     <p className="text-xs text-zinc-500">正在获取二维码...</p>
@@ -191,10 +286,16 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
                 )}
 
                 {/* Waiting / Scanned: show QR */}
-                {(status === "waiting" || status === "scanned") && qrUrl && (
+                {loginMode === "qr" && (status === "waiting" || status === "scanned") && qrUrl && (
                   <>
                     <div className="bg-white rounded-xl p-3">
                       <QRCodeSVG value={qrUrl} size={180} />
+                      <QRCodeCanvas
+                        ref={qrCanvasRef}
+                        value={qrUrl}
+                        size={360}
+                        className="absolute -left-[9999px] -top-[9999px]"
+                      />
                     </div>
                     {status === "waiting" && (
                       <p className="text-xs text-zinc-400 text-center">
@@ -215,7 +316,7 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
                 )}
 
                 {/* Logging in: saving credentials, fetching user */}
-                {status === "logging_in" && (
+                {loginMode === "qr" && status === "logging_in" && (
                   <div className="flex flex-col items-center gap-3 py-8">
                     <SpinnerGap size={32} className="animate-spin text-blue-400" />
                     <p className="text-sm text-white">请稍等，正在登录...</p>
@@ -224,7 +325,7 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
                 )}
 
                 {/* Success: done */}
-                {status === "success" && (
+                {loginMode === "qr" && status === "success" && (
                   <div className="flex flex-col items-center gap-2 py-8">
                     <CheckCircle size={32} weight="fill" className="text-green-400" />
                     <p className="text-sm text-white">登录成功</p>
@@ -232,7 +333,7 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
                 )}
 
                 {/* Expired */}
-                {status === "expired" && (
+                {loginMode === "qr" && status === "expired" && (
                   <div className="flex flex-col items-center gap-3 py-6">
                     <Warning size={28} weight="fill" className="text-amber-400" />
                     <p className="text-xs text-zinc-400">二维码已过期</p>
@@ -246,7 +347,7 @@ export function BilibiliLogin({ onLogin }: BilibiliLoginProps) {
                 )}
 
                 {/* Error */}
-                {status === "error" && (
+                {loginMode === "qr" && status === "error" && (
                   <div className="flex flex-col items-center gap-3 py-6">
                     <Warning size={28} weight="fill" className="text-red-400" />
                     <p className="text-xs text-zinc-400">获取二维码失败</p>

@@ -12,6 +12,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
 
+  const qualityParam = req.nextUrl.searchParams.get("quality");
+  let quality: number | undefined;
+  if (qualityParam) {
+    const parsedQuality = Number(qualityParam);
+    if (!Number.isInteger(parsedQuality) || parsedQuality <= 0) {
+      return NextResponse.json({ error: "Invalid quality" }, { status: 400 });
+    }
+    quality = parsedQuality;
+  }
+
   const bvid = extractBvId(url);
   if (!bvid) {
     return NextResponse.json({ error: "Not a valid Bilibili video URL" }, { status: 400 });
@@ -19,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const sessdata = getSessdataFromHeader(req);
-    const resolved = await resolveBilibiliVideo(bvid, sessdata);
+    const resolved = await resolveBilibiliVideo(bvid, sessdata, quality);
     const proxyUrl = `/api/bilibili/stream?u=${encodeURIComponent(resolved.streamUrl)}`;
     return NextResponse.json({
       streamUrl: proxyUrl,
@@ -27,6 +37,8 @@ export async function GET(req: NextRequest) {
       cover: resolved.cover,
       duration: resolved.duration,
       quality: resolved.quality,
+      acceptQualities: resolved.acceptQualities,
+      acceptDescriptions: resolved.acceptDescriptions,
       loggedIn: resolved.loggedIn,
       bvid,
     });
