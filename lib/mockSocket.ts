@@ -4,6 +4,7 @@ import type {
   JoinAck,
   OnlineUser,
   Room,
+  SeekPayload,
   ServerToClientEvents,
   VideoState,
   VideoStatePayload,
@@ -219,8 +220,23 @@ export class MockSocket {
         break;
       }
       case "video:seek": {
-        const [payload] = args as unknown as [{ currentTime: number }];
-        this.handleVideoSeek(payload.currentTime);
+        const [payload] = args as unknown as [SeekPayload];
+        this.handleVideoSeek(payload);
+        break;
+      }
+      case "video:load": {
+        const [payload] = args as unknown as [VideoStatePayload];
+        this.handleVideoLoad(payload.videoState);
+        break;
+      }
+      case "video:resync": {
+        if (!this.currentRoom) break;
+        const room = getRoom(this.currentRoom);
+        this.emitLocal("video:state", { videoState: { ...room.videoState } });
+        break;
+      }
+      case "video:resync-response": {
+        // No-op in mock mode — real server handles the relay
         break;
       }
       default:
@@ -295,11 +311,19 @@ export class MockSocket {
     this.broadcast(this.currentRoom, "video:state", { videoState: state });
   }
 
-  private handleVideoSeek(currentTime: number): void {
+  private handleVideoSeek(payload: SeekPayload): void {
     if (!this.currentRoom) return;
     const room = getRoom(this.currentRoom);
-    room.videoState.currentTime = currentTime;
-    this.broadcast(this.currentRoom, "video:seek", { currentTime });
+    room.videoState.currentTime = payload.currentTime;
+    room.videoState.playing = payload.playing;
+    this.broadcast(this.currentRoom, "video:seek", payload);
+  }
+
+  private handleVideoLoad(state: VideoState): void {
+    if (!this.currentRoom) return;
+    const room = getRoom(this.currentRoom);
+    room.videoState = { ...state };
+    // Do NOT broadcast — members sync only on explicit resync or host pause/play/seek
   }
 }
 

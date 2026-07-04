@@ -69,6 +69,7 @@ export interface VideoStatePayload {
 
 export interface SeekPayload {
   currentTime: number;
+  playing: boolean;
 }
 
 // Events exchanged between client and server. Keeping them in one union makes
@@ -82,12 +83,15 @@ export type ServerToClientEvents = {
   "video:state": (payload: VideoStatePayload) => void;
   "video:seek": (payload: SeekPayload) => void;
   "host:changed": (payload: HostChangedPayload) => void;
+  "video:resync-request": (payload: { memberId: string }) => void;
 };
 
 export type ClientToServerEvents = {
   "room:join": (payload: JoinPayload) => void;
   "chat:send": (payload: { content: string }) => void;
   "video:state": (payload: VideoStatePayload) => void;
-  "video:seek": (payload: { currentTime: number }) => void;
+  "video:seek": (payload: SeekPayload) => void;
   "video:resync": () => void;
+  "video:load": (payload: VideoStatePayload) => void;
+  "video:resync-response": (payload: { memberId: string; videoState: VideoState }) => void;
 };

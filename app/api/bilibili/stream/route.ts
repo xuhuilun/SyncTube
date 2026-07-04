@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server";
-import { proxyBilibiliStream, getSessionId } from "@/lib/bilibili";
+import { proxyBilibiliStream, getSessdataFromCookie } from "@/lib/bilibili";
 
-/** GET /api/bilibili/stream?u=xxx — Proxy a Bilibili CDN video stream. */
+/**
+ * GET /api/bilibili/stream?u=xxx — Proxy a Bilibili CDN video stream.
+ * Reads SESSDATA from the bili_sessdata cookie (set by client, since the
+ * <video> element can't set custom headers). Stateless: no server-side session.
+ */
 export async function GET(req: NextRequest) {
   const cdnUrl = req.nextUrl.searchParams.get("u");
   if (!cdnUrl || !cdnUrl.startsWith("https://")) {
@@ -9,9 +13,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const sessionId = await getSessionId();
+    const sessdata = getSessdataFromCookie(req);
     const range = req.headers.get("range");
-    return await proxyBilibiliStream(cdnUrl, sessionId, range);
+    return await proxyBilibiliStream(cdnUrl, sessdata, range);
   } catch (err) {
     return new Response(
       err instanceof Error ? err.message : "Stream proxy failed",

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { resolveBilibiliVideo, extractBvId, getSessionId } from "@/lib/bilibili";
+import { resolveBilibiliVideo, extractBvId, getSessdataFromHeader } from "@/lib/bilibili";
 
-/** GET /api/bilibili/resolve?url=xxx — Resolve a Bilibili URL to stream info. */
+/**
+ * GET /api/bilibili/resolve?url=xxx — Resolve a Bilibili URL to stream info.
+ * Reads SESSDATA from the x-bili-sessdata header (set by client from localStorage).
+ * Stateless: no server-side session lookup.
+ */
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get("url");
   if (!url) {
@@ -14,9 +18,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const sessionId = await getSessionId();
-    const resolved = await resolveBilibiliVideo(bvid, sessionId);
-    // Encode the CDN URL for the stream proxy
+    const sessdata = getSessdataFromHeader(req);
+    const resolved = await resolveBilibiliVideo(bvid, sessdata);
     const proxyUrl = `/api/bilibili/stream?u=${encodeURIComponent(resolved.streamUrl)}`;
     return NextResponse.json({
       streamUrl: proxyUrl,

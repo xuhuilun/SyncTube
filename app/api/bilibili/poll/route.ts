@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pollQrLogin, getSessionId } from "@/lib/bilibili";
+import { pollQrLogin } from "@/lib/bilibili";
 
-/** GET /api/bilibili/poll?qrcodeKey=xxx — Poll Bilibili QR login status. */
+/**
+ * GET /api/bilibili/poll?qrcodeKey=xxx — Poll Bilibili QR login status.
+ *
+ * On success, returns SESSDATA/bili_jct/dedeUserId to the client.
+ * The server does NOT store these — they are saved client-side (lib/biliAuth.ts).
+ */
 export async function GET(req: NextRequest) {
   const qrcodeKey = req.nextUrl.searchParams.get("qrcodeKey");
   if (!qrcodeKey) {
@@ -9,9 +14,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Use the session from cookies(); if missing, fall back to query param
-    const sessionId = await getSessionId();
-    const result = await pollQrLogin(qrcodeKey, sessionId);
+    const result = await pollQrLogin(qrcodeKey);
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowsClockwise, Pause, Play, LinkSimple, Warning, CheckCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { BilibiliLogin } from "@/components/room/BilibiliLogin";
 import { formatTime, isBilibili } from "@/lib/video";
+import { loadBiliUser } from "@/lib/biliAuth";
 
 interface VideoControlsProps {
   url: string;
@@ -35,6 +36,16 @@ export function VideoControls({
   onResync,
 }: VideoControlsProps) {
   const [draft, setDraft] = useState("");
+  const [biliUserName, setBiliUserName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (biliLoggedIn) {
+      const user = loadBiliUser();
+      setBiliUserName(user?.uname ?? null);
+    } else {
+      setBiliUserName(null);
+    }
+  }, [biliLoggedIn]);
 
   const submitUrl = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +80,7 @@ export function VideoControls({
           {biliLoggedIn ? (
             <span className="flex items-center gap-1 text-xs text-green-400">
               <CheckCircle size={14} weight="fill" />
-              B站已登录 1080P
+              B站已登录 1080P{biliUserName ? ` · ${biliUserName}` : ""}
             </span>
           ) : (
             <>

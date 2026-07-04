@@ -10,6 +10,7 @@ interface VideoPlayerProps {
   playing: boolean;
   onProgress?: (seconds: number) => void;
   onDuration?: (seconds: number) => void;
+  onReady?: () => void;
   playerRef: React.RefObject<{ seekTo?: (s: number) => void } | null>;
 }
 
@@ -25,6 +26,7 @@ export function VideoPlayer({
   playing,
   onProgress,
   onDuration,
+  onReady,
   playerRef,
 }: VideoPlayerProps) {
   const internalRef = useRef<ReactPlayer | null>(null);
@@ -84,6 +86,7 @@ export function VideoPlayer({
         controls
         width="100%"
         height="100%"
+        onReady={onReady}
         onProgress={(state) => onProgress?.(state.playedSeconds)}
         onDuration={(d) => onDuration?.(d)}
         config={{

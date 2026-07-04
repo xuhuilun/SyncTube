@@ -34,6 +34,22 @@ function genId(len = 12) {
   return out;
 }
 
+/**
+ * Returns the host's live playback position. When the host is playing, the
+ * server calculates how many seconds have elapsed since the last state
+ * update and adds them to the stored currentTime. This ensures resync and
+ * room:join always return an accurate position even if the host has been
+ * playing without emitting any events.
+ */
+function getEffectiveVideoState(room) {
+  const state = { ...room.videoState };
+  if (state.playing && room.lastUpdateAt) {
+    const elapsed = (Date.now() - room.lastUpdateAt) / 1000;
+    state.currentTime += elapsed;
+  }
+  return state;
+}
+
 app.prepare().then(() => {
   const httpServer = createServer((req, res) => {
     const parsedUrl = parse(req.url, true);
@@ -70,6 +86,7 @@ app.prepare().then(() => {
           videoState: { url: "", playing: false, currentTime: 0 },
           messages: [],
           hostId: socket.id,
+          lastUpdateAt: null,
         };
         rooms.set(roomId, room);
       }
@@ -80,7 +97,7 @@ app.prepare().then(() => {
         socketId: socket.id,
         roomId,
         users: Array.from(room.users.values()),
-        videoState: { ...room.videoState },
+        videoState: getEffectiveVideoState(room),
         messages: room.messages.slice(-MAX_MESSAGES),
         isHost: room.hostId === socket.id,
         hostId: room.hostId,
@@ -124,26 +141,64 @@ app.prepare().then(() => {
       if (!room) return;
       if (socket.id !== room.hostId) return;
       room.videoState = { ...videoState };
+      room.lastUpdateAt = videoState.playing ? Date.now() : null;
       socket.to(currentRoom).emit("video:state", { videoState });
     });
 
+    // ---- video:load ----
+    // Host loaded a new URL. Update server state but do NOT relay to members.
+    // Members will sync when they click "同步到房主" or when host pauses/plays/seeks.
+    socket.on("video:load", ({ videoState }) => {
+      if (!currentRoom) return;
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+      if (socket.id !== room.hostId) return;
+      room.videoState = { ...videoState };
+      room.lastUpdateAt = videoState.playing ? Date.now() : null;
+    });
+
     // ---- video:seek ----
-    socket.on("video:seek", ({ currentTime }) => {
+    socket.on("video:seek", ({ currentTime, playing }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
       if (socket.id !== room.hostId) return;
       room.videoState.currentTime = currentTime;
-      socket.to(currentRoom).emit("video:seek", { currentTime });
+      room.videoState.playing = playing;
+      if (playing) {
+        room.lastUpdateAt = Date.now();
+      } else {
+        room.lastUpdateAt = null;
+      }
+      socket.to(currentRoom).emit("video:seek", { currentTime, playing });
     });
 
     // ---- video:resync ----
-    // Member requests current host state; server responds to requester only.
+    // Member requests current host state. Server forwards to the host, who
+    // responds with its actual real-time player state. Falls back to
+    // getEffectiveVideoState if the host is unavailable.
     socket.on("video:resync", () => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      socket.emit("video:state", { videoState: { ...room.videoState } });
+      if (!room.hostId || room.hostId === socket.id) {
+        socket.emit("video:state", { videoState: getEffectiveVideoState(room) });
+        return;
+      }
+      io.to(room.hostId).emit("video:resync-request", { memberId: socket.id });
+    });
+
+    // ---- video:resync-response ----
+    // Host responds with its real-time player state. Server relays to the
+    // requesting member and updates stored state for fresher future reads.
+    socket.on("video:resync-response", ({ memberId, videoState }) => {
+      if (!currentRoom) return;
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+      if (socket.id !== room.hostId) return;
+      room.videoState = { ...videoState };
+      room.lastUpdateAt = videoState.playing ? Date.now() : null;
+      io.to(memberId).emit("video:state", { videoState });
     });
 
     // ---- disconnect ----

@@ -14,6 +14,7 @@ import { useRoom } from "@/hooks/useRoom";
 import { useVideoSync } from "@/hooks/useVideoSync";
 import { useToast } from "@/components/ui/Toast";
 import { isBilibili } from "@/lib/video";
+import { loadBiliAuth, clearBiliAuth, getBiliSessdataHeader } from "@/lib/biliAuth";
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -40,6 +41,14 @@ export default function RoomPage() {
   const [bilibiliStreamUrl, setBilibiliStreamUrl] = useState<string | null>(null);
   const [biliLoggedIn, setBiliLoggedIn] = useState(false);
 
+  // Auto-login: check localStorage for saved Bilibili credentials on mount
+  useEffect(() => {
+    const auth = loadBiliAuth();
+    if (auth) setBiliLoggedIn(true);
+  }, []);
+
+  // Bilibili 1080P: resolve video URL to a direct stream URL via server API.
+  // Passes SESSDATA from localStorage via header; clears stale auth if expired.
   useEffect(() => {
     if (!video.url || !isBilibili(video.url)) {
       setBilibiliStreamUrl(null);
@@ -47,13 +56,18 @@ export default function RoomPage() {
     }
     let cancelled = false;
     setBilibiliStreamUrl(null);
-    fetch(`/api/bilibili/resolve?url=${encodeURIComponent(video.url)}`)
+    const headers = getBiliSessdataHeader();
+    fetch(`/api/bilibili/resolve?url=${encodeURIComponent(video.url)}`, { headers })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
         if (data.streamUrl) {
           setBilibiliStreamUrl(data.streamUrl);
           setBiliLoggedIn(data.loggedIn);
+          // If we had auth but the server says not logged in, SESSDATA is stale
+          if (!data.loggedIn && headers["x-bili-sessdata"]) {
+            clearBiliAuth();
+          }
         }
       })
       .catch(() => {
@@ -131,6 +145,7 @@ export default function RoomPage() {
             playing={video.playing}
             onProgress={video.onProgress}
             onDuration={setDuration}
+            onReady={video.onReady}
             playerRef={playerRef}
           />
           <VideoControls
