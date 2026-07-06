@@ -9,15 +9,19 @@ import { Input } from "@/components/ui/Input";
 import { Card } from "@/components/ui/Card";
 import { useToast } from "@/components/ui/Toast";
 import { generateRoomId } from "@/lib/mockSocket";
+import type { RoomMode } from "@/types";
 
 export default function HomePage() {
   const router = useRouter();
   const toast = useToast();
   const [joinId, setJoinId] = useState("");
+  const [roomMode, setRoomMode] = useState<RoomMode>("couple");
+  const [maxUsers, setMaxUsers] = useState(8);
 
   const handleCreate = () => {
     const id = generateRoomId();
-    router.push(`/room/${id}`);
+    const max = roomMode === "couple" ? 2 : Math.min(50, Math.max(2, Math.floor(maxUsers || 8)));
+    router.push(`/room/${id}?mode=${roomMode}&max=${max}`);
   };
 
   const handleJoin = (e: React.FormEvent) => {
@@ -65,7 +69,7 @@ export default function HomePage() {
           >
             <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs text-accent border border-accent/25 bg-accent/10 mb-6">
               <Sparkle size={13} weight="fill" />
-              实时同步 · 多人聊天
+              关键事件同步 · 多人聊天
             </span>
             <h1 className="text-4xl md:text-6xl font-semibold tracking-tight leading-[1.05] text-white">
               和远方的朋友，
@@ -73,7 +77,7 @@ export default function HomePage() {
               看同一部视频
             </h1>
             <p className="mt-5 text-zinc-400 text-base md:text-lg max-w-[28rem] mx-auto leading-relaxed">
-              创建一个房间，分享链接。播放、暂停、进度全程同步，还能边看边聊。
+              创建情侣房间或放映厅，分享链接。关键操作同步，也可以按需一键对齐进度。
             </p>
           </motion.div>
 
@@ -86,6 +90,33 @@ export default function HomePage() {
               <div className="flex flex-col gap-5">
                 <div>
                   <p className="text-sm text-zinc-400 mb-3">新建房间</p>
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant={roomMode === "couple" ? "primary" : "secondary"}
+                      onClick={() => setRoomMode("couple")}
+                    >
+                      情侣房间
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={roomMode === "theater" ? "primary" : "secondary"}
+                      onClick={() => setRoomMode("theater")}
+                    >
+                      放映厅
+                    </Button>
+                  </div>
+                  {roomMode === "theater" && (
+                    <Input
+                      type="number"
+                      min={2}
+                      max={50}
+                      value={maxUsers}
+                      onChange={(e) => setMaxUsers(Number(e.target.value))}
+                      className="mb-3"
+                      aria-label="放映厅最大人数"
+                    />
+                  )}
                   <Button
                     size="lg"
                     className="w-full"

@@ -1,44 +1,46 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { VideoState } from "@/types";
+import type { RoomMode, VideoChangeProposalPayload, VideoState } from "@/types";
 import { getSocket } from "@/lib/mockSocket";
-
-/**
- * Video sync hook.
- *
- * Core loop-avoidance rule: when a remote event arrives we apply it to the
- * player via an imperative ref and set a `applyingRemote` flag so our own
- * onPlay/onPause/onProgress handlers do NOT re-broadcast the change.
- */
 
 interface UseVideoSyncArgs {
   roomId: string;
   initial?: VideoState | null;
-  // Imperative control over the underlying player.
   playerRef: React.RefObject<{
     seekTo?: (seconds: number) => void;
   } | null>;
   isHost: boolean;
+  roomMode: RoomMode;
 }
 
-export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyncArgs) {
+export function useVideoSync({
+  roomId,
+  initial,
+  playerRef,
+  isHost,
+  roomMode,
+}: UseVideoSyncArgs) {
   const [url, setUrl] = useState<string>(initial?.url ?? "");
   const [playing, setPlaying] = useState<boolean>(initial?.playing ?? false);
-  // currentTime: ref for callback access, state for reactivity (time display / progress bar).
   const currentTimeRef = useRef<number>(initial?.currentTime ?? 0);
   const [currentTime, setCurrentTime] = useState<number>(initial?.currentTime ?? 0);
+  const [videoChangeProposal, setVideoChangeProposal] =
+    useState<VideoChangeProposalPayload | null>(null);
   const applyingRemote = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
   const isHostRef = useRef(isHost);
+  const roomModeRef = useRef<RoomMode>(roomMode);
+  const urlRef = useRef(url);
+  const playingRef = useRef(playing);
 
   useEffect(() => {
     isHostRef.current = isHost;
   }, [isHost]);
 
-  // Refs for reading current state in socket callbacks without stale closures.
-  const urlRef = useRef(url);
-  const playingRef = useRef(playing);
+  useEffect(() => {
+    roomModeRef.current = roomMode;
+  }, [roomMode]);
 
   useEffect(() => {
     urlRef.current = url;
@@ -48,57 +50,52 @@ export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyn
     playingRef.current = playing;
   }, [playing]);
 
-  // Apply initial state once the room syncs.
+  const shouldPublishControl = useCallback(() => {
+    return roomModeRef.current === "couple" || isHostRef.current;
+  }, []);
+
+  const applyVideoState = useCallback(
+    (next: VideoState) => {
+      applyingRemote.current = true;
+      setUrl(next.url);
+      urlRef.current = next.url;
+      setPlaying(next.playing);
+      playingRef.current = next.playing;
+      currentTimeRef.current = next.currentTime;
+      setCurrentTime(next.currentTime);
+      pendingSeekRef.current = next.currentTime;
+      playerRef.current?.seekTo?.(next.currentTime);
+      queueMicrotask(() => {
+        applyingRemote.current = false;
+      });
+    },
+    [playerRef],
+  );
+
+  // First room join applies the server state once. No listener is installed
+  // that continuously corrects member progress.
   useEffect(() => {
     if (!initial) return;
-    applyingRemote.current = true;
-    setUrl(initial.url);
-    setPlaying(initial.playing);
-    currentTimeRef.current = initial.currentTime;
-    setCurrentTime(initial.currentTime);
-    // Queue the seek; onReady will apply it when the player loads.
-    // Also try immediately in case the player is already ready.
-    pendingSeekRef.current = initial.currentTime;
-    playerRef.current?.seekTo?.(initial.currentTime);
-    queueMicrotask(() => {
-      applyingRemote.current = false;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial]);
+    applyVideoState(initial);
+  }, [initial, applyVideoState]);
 
   const socket = getSocket();
 
   useEffect(() => {
     if (!roomId) return;
 
-    const onState = (p: { videoState: VideoState }) => {
-      applyingRemote.current = true;
-      setUrl(p.videoState.url);
-      setPlaying(p.videoState.playing);
-      currentTimeRef.current = p.videoState.currentTime;
-      setCurrentTime(p.videoState.currentTime);
-      pendingSeekRef.current = p.videoState.currentTime;
-      playerRef.current?.seekTo?.(p.videoState.currentTime);
-      // Release the lock on the next tick.
-      queueMicrotask(() => {
-        applyingRemote.current = false;
-      });
+    const onSyncState = (p: { videoState: VideoState }) => {
+      applyVideoState(p.videoState);
     };
 
-    const onSeek = (p: { currentTime: number; playing: boolean }) => {
-      applyingRemote.current = true;
-      currentTimeRef.current = p.currentTime;
-      setCurrentTime(p.currentTime);
-      setPlaying(p.playing);
-      pendingSeekRef.current = p.currentTime;
-      playerRef.current?.seekTo?.(p.currentTime);
-      queueMicrotask(() => {
-        applyingRemote.current = false;
-      });
+    const onChangeProposal = (p: VideoChangeProposalPayload) => {
+      if (roomModeRef.current !== "theater") return;
+      setVideoChangeProposal(p);
     };
 
     const onResyncRequest = (p: { memberId: string }) => {
-      if (!isHostRef.current) return;
+      const canProvideState = roomModeRef.current === "couple" || isHostRef.current;
+      if (!canProvideState) return;
       socket.emit("video:resync-response", {
         memberId: p.memberId,
         videoState: {
@@ -109,47 +106,45 @@ export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyn
       });
     };
 
-    socket.on("video:state", onState);
-    socket.on("video:seek", onSeek);
+    socket.on("video:sync-state", onSyncState);
+    socket.on("video:change-proposal", onChangeProposal);
     socket.on("video:resync-request", onResyncRequest);
     return () => {
-      socket.off("video:state", onState);
-      socket.off("video:seek", onSeek);
+      socket.off("video:sync-state", onSyncState);
+      socket.off("video:change-proposal", onChangeProposal);
       socket.off("video:resync-request", onResyncRequest);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
-
-  // ---- Local user actions ----
-  // Host: actions broadcast to all members via server.
-  // Member: actions are local-only (no broadcast). Use resync() to re-sync.
+  }, [applyVideoState, roomId, socket]);
 
   const loadUrl = useCallback(
     (newUrl: string) => {
-      setUrl(newUrl);
-      currentTimeRef.current = 0;
-      setCurrentTime(0);
-      pendingSeekRef.current = null;
       const next: VideoState = {
         url: newUrl,
         playing: true,
         currentTime: 0,
       };
-      setPlaying(true);
-      if (isHostRef.current) {
+      setUrl(next.url);
+      urlRef.current = next.url;
+      setPlaying(next.playing);
+      playingRef.current = next.playing;
+      currentTimeRef.current = next.currentTime;
+      setCurrentTime(next.currentTime);
+      pendingSeekRef.current = null;
+      if (shouldPublishControl()) {
         socket.emit("video:load", { videoState: next });
       }
     },
-    [socket],
+    [shouldPublishControl, socket],
   );
 
   const togglePlay = useCallback(() => {
     setPlaying((p) => {
       const next = !p;
-      if (isHostRef.current) {
+      playingRef.current = next;
+      if (shouldPublishControl()) {
         socket.emit("video:state", {
           videoState: {
-            url,
+            url: urlRef.current,
             playing: next,
             currentTime: currentTimeRef.current,
           },
@@ -157,36 +152,41 @@ export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyn
       }
       return next;
     });
-  }, [socket, url]);
+  }, [shouldPublishControl, socket]);
 
   const seek = useCallback(
     (seconds: number) => {
       currentTimeRef.current = seconds;
       setCurrentTime(seconds);
       playerRef.current?.seekTo?.(seconds);
-      if (isHostRef.current) {
-        socket.emit("video:seek", { currentTime: seconds, playing });
+      if (shouldPublishControl()) {
+        socket.emit("video:seek", { currentTime: seconds, playing: playingRef.current });
       }
     },
-    [socket, playing],
+    [playerRef, shouldPublishControl, socket],
   );
 
-  // Member requests current host state from server.
   const resync = useCallback(() => {
     socket.emit("video:resync");
   }, [socket]);
 
-  // Called by ReactPlayer when the video finishes loading. Applies any
-  // pending seek that was queued while the player wasn't ready.
+  const acceptVideoChange = useCallback(() => {
+    if (!videoChangeProposal) return;
+    applyVideoState(videoChangeProposal.videoState);
+    setVideoChangeProposal(null);
+  }, [applyVideoState, videoChangeProposal]);
+
+  const rejectVideoChange = useCallback(() => {
+    setVideoChangeProposal(null);
+  }, []);
+
   const onReady = useCallback(() => {
     if (pendingSeekRef.current !== null) {
       playerRef.current?.seekTo?.(pendingSeekRef.current);
       pendingSeekRef.current = null;
     }
-  }, []);
+  }, [playerRef]);
 
-  // Called by the player on its natural time updates. Does NOT broadcast;
-  // only keeps our local time ref fresh so a later toggle/seek is accurate.
   const onProgress = useCallback((seconds: number) => {
     if (applyingRemote.current) return;
     currentTimeRef.current = seconds;
@@ -197,11 +197,14 @@ export function useVideoSync({ roomId, initial, playerRef, isHost }: UseVideoSyn
     url,
     playing,
     currentTime,
+    videoChangeProposal,
     loadUrl,
     togglePlay,
     seek,
     onProgress,
     onReady,
     resync,
+    acceptVideoChange,
+    rejectVideoChange,
   };
 }

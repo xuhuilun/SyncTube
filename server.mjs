@@ -25,6 +25,8 @@ const handle = app.getRequestHandler();
 // ---- In-memory room state (server-side) ----
 
 const MAX_MESSAGES = 200;
+const DEFAULT_THEATER_MAX_USERS = 8;
+const MAX_THEATER_USERS = 50;
 const rooms = new Map();
 
 function genId(len = 12) {
@@ -32,6 +34,17 @@ function genId(len = 12) {
   let out = "";
   for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * 36)];
   return out;
+}
+
+function normalizeRoomMode(roomMode) {
+  return roomMode === "couple" ? "couple" : "theater";
+}
+
+function normalizeMaxUsers(roomMode, maxUsers) {
+  if (roomMode === "couple") return 2;
+  const value = Number(maxUsers);
+  if (!Number.isFinite(value)) return DEFAULT_THEATER_MAX_USERS;
+  return Math.min(MAX_THEATER_USERS, Math.max(2, Math.floor(value)));
 }
 
 /**
@@ -70,16 +83,15 @@ app.prepare().then(() => {
     const user = { socketId: socket.id, nickname: "匿名用户" };
 
     // ---- room:join ----
-    socket.on("room:join", ({ roomId, nickname }) => {
+    socket.on("room:join", ({ roomId, nickname, roomMode, maxUsers }) => {
       if (currentRoom && currentRoom !== roomId) {
         socket.leave(currentRoom);
       }
-      currentRoom = roomId;
       user.nickname = nickname || `匿名用户-${genId(4)}`;
-      socket.join(roomId);
 
       let room = rooms.get(roomId);
       if (!room) {
+        const normalizedMode = normalizeRoomMode(roomMode);
         room = {
           id: roomId,
           users: new Map(),
@@ -87,9 +99,18 @@ app.prepare().then(() => {
           messages: [],
           hostId: socket.id,
           lastUpdateAt: null,
+          roomMode: normalizedMode,
+          maxUsers: normalizeMaxUsers(normalizedMode, maxUsers),
         };
         rooms.set(roomId, room);
       }
+      if (!room.users.has(socket.id) && room.users.size >= room.maxUsers) {
+        socket.emit("room:full", { maxUsers: room.maxUsers });
+        return;
+      }
+
+      currentRoom = roomId;
+      socket.join(roomId);
       room.users.set(socket.id, { ...user });
 
       // Ack to the joiner: includes current state + recent messages.
@@ -101,6 +122,8 @@ app.prepare().then(() => {
         messages: room.messages.slice(-MAX_MESSAGES),
         isHost: room.hostId === socket.id,
         hostId: room.hostId,
+        roomMode: room.roomMode,
+        maxUsers: room.maxUsers,
       });
 
       // Notify everyone else in the room.
@@ -133,36 +156,49 @@ app.prepare().then(() => {
     });
 
     // ---- video:state ----
-    // Only host can broadcast state changes. Server stores and relays to
-    // everyone EXCEPT sender (sender already applied it locally).
+    // Sync trigger: play/pause.
+    // Couple rooms mirror to the other peer. Theater rooms only let the host
+    // update the official reference state; members stay local-only.
     socket.on("video:state", ({ videoState }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      if (socket.id !== room.hostId) return;
+      if (room.roomMode === "theater" && socket.id !== room.hostId) return;
       room.videoState = { ...videoState };
       room.lastUpdateAt = videoState.playing ? Date.now() : null;
-      socket.to(currentRoom).emit("video:state", { videoState });
+      if (room.roomMode === "couple") {
+        socket.to(currentRoom).emit("video:sync-state", { videoState });
+      }
     });
 
     // ---- video:load ----
-    // Host loaded a new URL. Update server state but do NOT relay to members.
-    // Members will sync when they click "同步到房主" or when host pauses/plays/seeks.
+    // Sync trigger: video switch. Couple rooms switch together. Theater rooms
+    // notify members and let them decide whether to follow.
     socket.on("video:load", ({ videoState }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      if (socket.id !== room.hostId) return;
+      if (room.roomMode === "theater" && socket.id !== room.hostId) return;
       room.videoState = { ...videoState };
       room.lastUpdateAt = videoState.playing ? Date.now() : null;
+      if (room.roomMode === "couple") {
+        socket.to(currentRoom).emit("video:sync-state", { videoState });
+      } else {
+        socket.to(currentRoom).emit("video:change-proposal", {
+          videoState,
+          proposerId: socket.id,
+          proposerNickname: user.nickname,
+        });
+      }
     });
 
     // ---- video:seek ----
+    // Sync trigger: seek.
     socket.on("video:seek", ({ currentTime, playing }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      if (socket.id !== room.hostId) return;
+      if (room.roomMode === "theater" && socket.id !== room.hostId) return;
       room.videoState.currentTime = currentTime;
       room.videoState.playing = playing;
       if (playing) {
@@ -170,35 +206,43 @@ app.prepare().then(() => {
       } else {
         room.lastUpdateAt = null;
       }
-      socket.to(currentRoom).emit("video:seek", { currentTime, playing });
+      if (room.roomMode === "couple") {
+        socket.to(currentRoom).emit("video:sync-state", {
+          videoState: { ...room.videoState },
+        });
+      }
     });
 
     // ---- video:resync ----
-    // Member requests current host state. Server forwards to the host, who
-    // responds with its actual real-time player state. Falls back to
-    // getEffectiveVideoState if the host is unavailable.
+    // Manual sync trigger. Theater members sync to host; couple users sync to
+    // the other peer when present. Stored state is used as a fallback.
     socket.on("video:resync", () => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      if (!room.hostId || room.hostId === socket.id) {
-        socket.emit("video:state", { videoState: getEffectiveVideoState(room) });
+      const targetId =
+        room.roomMode === "couple"
+          ? Array.from(room.users.keys()).find((id) => id !== socket.id)
+          : room.hostId;
+      if (!targetId || targetId === socket.id) {
+        socket.emit("video:sync-state", { videoState: getEffectiveVideoState(room) });
         return;
       }
-      io.to(room.hostId).emit("video:resync-request", { memberId: socket.id });
+      io.to(targetId).emit("video:resync-request", { memberId: socket.id });
     });
 
     // ---- video:resync-response ----
-    // Host responds with its real-time player state. Server relays to the
-    // requesting member and updates stored state for fresher future reads.
+    // Sync source responds with its real-time player state. Server relays only
+    // to the requester and updates stored state for fresher future reads.
     socket.on("video:resync-response", ({ memberId, videoState }) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (!room) return;
-      if (socket.id !== room.hostId) return;
+      if (room.roomMode === "theater" && socket.id !== room.hostId) return;
+      if (room.roomMode === "couple" && !room.users.has(socket.id)) return;
       room.videoState = { ...videoState };
       room.lastUpdateAt = videoState.playing ? Date.now() : null;
-      io.to(memberId).emit("video:state", { videoState });
+      io.to(memberId).emit("video:sync-state", { videoState });
     });
 
     // ---- disconnect ----

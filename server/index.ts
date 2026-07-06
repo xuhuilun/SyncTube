@@ -20,6 +20,9 @@ interface Room {
   users: Map<string, OnlineUser>;
   videoState: VideoState;
   messages: ChatMessage[];
+  hostId: string;
+  roomMode: "couple" | "theater";
+  maxUsers: number;
 }
 
 const MAX_MESSAGES = 200;
@@ -28,7 +31,15 @@ const rooms = new Map<string, Room>();
 function getRoom(id: string): Room {
   let r = rooms.get(id);
   if (!r) {
-    r = { roomId: id, users: new Map(), videoState: { url: "", playing: false, currentTime: 0 }, messages: [] };
+    r = {
+      roomId: id,
+      users: new Map(),
+      videoState: { url: "", playing: false, currentTime: 0 },
+      messages: [],
+      hostId: "",
+      roomMode: "theater",
+      maxUsers: 8,
+    };
     rooms.set(id, r);
   }
   return r;
@@ -45,8 +56,18 @@ const io = new Server(createServer(), { cors: { origin: "*" } });
 io.on("connection", (socket) => {
   let currentRoom: string | null = null;
 
-  socket.on("room:join", ({ roomId, nickname }) => {
+  socket.on("room:join", ({ roomId, nickname, roomMode, maxUsers }) => {
     const room = getRoom(roomId);
+    if (!room.hostId) {
+      room.hostId = socket.id;
+      room.roomMode = roomMode === "couple" ? "couple" : "theater";
+      room.maxUsers =
+        room.roomMode === "couple" ? 2 : Math.min(50, Math.max(2, Math.floor(Number(maxUsers) || 8)));
+    }
+    if (!room.users.has(socket.id) && room.users.size >= room.maxUsers) {
+      socket.emit("room:full", { maxUsers: room.maxUsers });
+      return;
+    }
     const user: OnlineUser = { socketId: socket.id, nickname: nickname || `匿名用户-${genId(4)}` };
     room.users.set(socket.id, user);
     currentRoom = roomId;
@@ -58,11 +79,16 @@ io.on("connection", (socket) => {
       users: Array.from(room.users.values()),
       videoState: { ...room.videoState },
       messages: room.messages.slice(-MAX_MESSAGES),
+      isHost: room.hostId === socket.id,
+      hostId: room.hostId,
+      roomMode: room.roomMode,
+      maxUsers: room.maxUsers,
     });
 
     socket.to(roomId).emit("user:joined", {
       user,
       users: Array.from(room.users.values()),
+      hostId: room.hostId,
     });
   });
 
@@ -84,20 +110,51 @@ io.on("connection", (socket) => {
     io.to(currentRoom).emit("chat:message", { message });
   });
 
-  socket.on("video:state", (state: VideoState) => {
+  socket.on("video:state", ({ videoState }: { videoState: VideoState }) => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
-    room.videoState = { ...state };
-    socket.to(currentRoom).emit("video:state", { videoState: state });
+    if (room.roomMode === "theater" && socket.id !== room.hostId) return;
+    room.videoState = { ...videoState };
+    if (room.roomMode === "couple") {
+      socket.to(currentRoom).emit("video:sync-state", { videoState });
+    }
   });
 
-  socket.on("video:seek", ({ currentTime }) => {
+  socket.on("video:seek", ({ currentTime, playing }) => {
     if (!currentRoom) return;
     const room = rooms.get(currentRoom);
     if (!room) return;
+    if (room.roomMode === "theater" && socket.id !== room.hostId) return;
     room.videoState.currentTime = currentTime;
-    socket.to(currentRoom).emit("video:seek", { currentTime });
+    room.videoState.playing = playing;
+    if (room.roomMode === "couple") {
+      socket.to(currentRoom).emit("video:sync-state", { videoState: { ...room.videoState } });
+    }
+  });
+
+  socket.on("video:load", ({ videoState }: { videoState: VideoState }) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (room.roomMode === "theater" && socket.id !== room.hostId) return;
+    room.videoState = { ...videoState };
+    if (room.roomMode === "couple") {
+      socket.to(currentRoom).emit("video:sync-state", { videoState });
+    } else {
+      socket.to(currentRoom).emit("video:change-proposal", {
+        videoState,
+        proposerId: socket.id,
+        proposerNickname: room.users.get(socket.id)?.nickname ?? "",
+      });
+    }
+  });
+
+  socket.on("video:resync", () => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    socket.emit("video:sync-state", { videoState: { ...room.videoState } });
   });
 
   socket.on("disconnect", () => {
@@ -105,9 +162,13 @@ io.on("connection", (socket) => {
     const room = rooms.get(currentRoom);
     if (!room) return;
     room.users.delete(socket.id);
+    if (room.hostId === socket.id && room.users.size > 0) {
+      room.hostId = Array.from(room.users.keys())[0];
+    }
     socket.to(currentRoom).emit("user:left", {
       socketId: socket.id,
       users: Array.from(room.users.values()),
+      hostId: room.hostId,
     });
     if (room.users.size === 0) rooms.delete(currentRoom);
   });

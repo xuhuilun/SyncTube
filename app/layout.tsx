@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SyncTube - 异地同步观影",
-  description: "和远方的朋友一起看同一部视频，实时同步，实时聊天。",
+  description: "和远方的朋友一起看视频，关键事件同步，实时聊天。",
 };
 
 export default function RootLayout({

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { OnlineUser, VideoState, ChatMessage } from "@/types";
+import type { OnlineUser, VideoState, ChatMessage, RoomMode } from "@/types";
 import { defaultNickname, getSocket } from "@/lib/mockSocket";
 
 export interface RoomState {
@@ -12,9 +12,17 @@ export interface RoomState {
   messages: ChatMessage[];
   isHost: boolean;
   hostId: string | null;
+  roomMode: RoomMode;
+  maxUsers: number;
+  full: boolean;
 }
 
-export function useRoom(roomId: string, nickname: string) {
+interface UseRoomOptions {
+  roomMode?: RoomMode;
+  maxUsers?: number;
+}
+
+export function useRoom(roomId: string, nickname: string, options: UseRoomOptions = {}) {
   const [state, setState] = useState<RoomState>({
     joined: false,
     socketId: null,
@@ -23,6 +31,9 @@ export function useRoom(roomId: string, nickname: string) {
     messages: [],
     isHost: false,
     hostId: null,
+    roomMode: options.roomMode ?? "theater",
+    maxUsers: options.maxUsers ?? 8,
+    full: false,
   });
 
   useEffect(() => {
@@ -39,6 +50,8 @@ export function useRoom(roomId: string, nickname: string) {
       messages: ChatMessage[];
       isHost: boolean;
       hostId: string;
+      roomMode: RoomMode;
+      maxUsers: number;
     }) => {
       setState({
         joined: true,
@@ -48,7 +61,14 @@ export function useRoom(roomId: string, nickname: string) {
         messages: ack.messages,
         isHost: ack.isHost,
         hostId: ack.hostId,
+        roomMode: ack.roomMode,
+        maxUsers: ack.maxUsers,
+        full: false,
       });
+    };
+
+    const onRoomFull = (p: { maxUsers: number }) => {
+      setState((s) => ({ ...s, joined: false, full: true, maxUsers: p.maxUsers }));
     };
 
     const onUserJoined = (p: { user: OnlineUser; users: OnlineUser[]; hostId: string }) => {
@@ -64,22 +84,31 @@ export function useRoom(roomId: string, nickname: string) {
     };
 
     socket.on("room:joined", onJoined);
+    socket.on("room:full", onRoomFull);
     socket.on("user:joined", onUserJoined);
     socket.on("user:left", onUserLeft);
     socket.on("host:changed", onHostChanged);
 
     // Slight delay so listeners are attached before the ack fires.
-    queueMicrotask(() => socket.emit("room:join", { roomId, nickname: name }));
+    queueMicrotask(() =>
+      socket.emit("room:join", {
+        roomId,
+        nickname: name,
+        roomMode: options.roomMode,
+        maxUsers: options.maxUsers,
+      }),
+    );
 
     return () => {
       socket.off("room:joined", onJoined);
+      socket.off("room:full", onRoomFull);
       socket.off("user:joined", onUserJoined);
       socket.off("user:left", onUserLeft);
       socket.off("host:changed", onHostChanged);
       socket.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, nickname]);
+  }, [roomId, nickname, options.roomMode, options.maxUsers]);
 
   const setUsers = useCallback((users: OnlineUser[]) => {
     setState((s) => ({ ...s, users }));

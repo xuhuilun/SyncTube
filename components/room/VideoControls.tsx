@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/Input";
 import { BilibiliLogin } from "@/components/room/BilibiliLogin";
 import { formatBiliQuality, formatTime, isBilibili } from "@/lib/video";
 import { loadBiliUser } from "@/lib/biliAuth";
+import type { RoomMode } from "@/types";
 
 interface VideoControlsProps {
   url: string;
@@ -27,6 +28,8 @@ interface VideoControlsProps {
   biliQualities?: number[];
   biliQualityLoading?: boolean;
   isHost: boolean;
+  roomMode: RoomMode;
+  canLoadVideo: boolean;
   onBiliLogin?: () => void;
   onBiliQualityChange?: (quality: number) => void;
   onUrlSubmit: (url: string) => void;
@@ -45,6 +48,8 @@ export function VideoControls({
   biliQualities = [],
   biliQualityLoading = false,
   isHost,
+  roomMode,
+  canLoadVideo,
   onBiliLogin,
   onBiliQualityChange,
   onUrlSubmit,
@@ -79,7 +84,7 @@ export function VideoControls({
 
   return (
     <div className="flex flex-col gap-3">
-      {isHost && (
+      {canLoadVideo && (
         <form onSubmit={submitUrl} className="flex flex-col sm:flex-row gap-2">
           <Input
             value={draft}
@@ -164,14 +169,16 @@ export function VideoControls({
         </div>
       )}
 
-      {/* Member: resync to host */}
-      {!isHost && url && (!bilibili || biliSynced) && (
+      {/* Manual sync: couple users sync to each other; theater members sync to host. */}
+      {url && (!bilibili || biliSynced) && (roomMode === "couple" || !isHost) && (
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => onResync?.()}>
             <ArrowsClockwise size={15} weight="bold" />
-            同步到房主
+            {roomMode === "couple" ? "同步进度" : "同步到房主"}
           </Button>
-          <span className="text-xs text-zinc-600">你的操作仅本地生效</span>
+          <span className="text-xs text-zinc-600">
+            {roomMode === "couple" ? "手动对齐双方播放进度" : "你的操作仅本地生效"}
+          </span>
         </div>
       )}
 

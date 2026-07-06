@@ -47,6 +47,9 @@ function makeRoom(roomId: string): Room {
     users: new Map(),
     videoState: { ...emptyVideoState },
     messages: [],
+    roomMode: "theater",
+    maxUsers: 8,
+    hostId: "",
   };
 }
 
@@ -205,8 +208,13 @@ export class MockSocket {
 
     switch (event) {
       case "room:join": {
-        const [payload] = args as unknown as [{ roomId: string; nickname: string }];
-        this.joinRoom(payload.roomId, payload.nickname);
+        const [payload] = args as unknown as [{
+          roomId: string;
+          nickname: string;
+          roomMode?: "couple" | "theater";
+          maxUsers?: number;
+        }];
+        this.joinRoom(payload.roomId, payload.nickname, payload.roomMode, payload.maxUsers);
         break;
       }
       case "chat:send": {
@@ -232,7 +240,7 @@ export class MockSocket {
       case "video:resync": {
         if (!this.currentRoom) break;
         const room = getRoom(this.currentRoom);
-        this.emitLocal("video:state", { videoState: { ...room.videoState } });
+        this.emitLocal("video:sync-state", { videoState: { ...room.videoState } });
         break;
       }
       case "video:resync-response": {
@@ -245,8 +253,22 @@ export class MockSocket {
     return this;
   }
 
-  private joinRoom(roomId: string, nickname: string): void {
+  private joinRoom(
+    roomId: string,
+    nickname: string,
+    roomMode: "couple" | "theater" = "theater",
+    maxUsers = 8,
+  ): void {
     const room = getRoom(roomId);
+    if (!room.hostId) {
+      room.hostId = this.id;
+      room.roomMode = roomMode;
+      room.maxUsers = roomMode === "couple" ? 2 : Math.min(50, Math.max(2, Math.floor(maxUsers)));
+    }
+    if (!room.users.has(this.id) && room.users.size >= room.maxUsers) {
+      this.emitLocal("room:full", { maxUsers: room.maxUsers });
+      return;
+    }
     const user: OnlineUser = { socketId: this.id, nickname };
     room.users.set(this.id, user);
     this.currentRoom = roomId;
@@ -257,8 +279,10 @@ export class MockSocket {
       users: Array.from(room.users.values()),
       videoState: { ...room.videoState },
       messages: room.messages.slice(-MAX_MESSAGES),
-      isHost: true,
-      hostId: this.id,
+      isHost: room.hostId === this.id,
+      hostId: room.hostId,
+      roomMode: room.roomMode,
+      maxUsers: room.maxUsers,
     };
     this.emitLocal("room:joined", ack);
 
@@ -266,6 +290,7 @@ export class MockSocket {
     const joinedPayload = {
       user,
       users: Array.from(room.users.values()),
+      hostId: room.hostId,
     };
     this.broadcast(roomId, "user:joined", joinedPayload);
   }
@@ -276,7 +301,14 @@ export class MockSocket {
     if (!room) return;
     room.users.delete(this.id);
     const users = Array.from(room.users.values());
-    this.broadcast(roomId, "user:left", { socketId: this.id, users });
+    if (room.hostId === this.id && users.length > 0) {
+      room.hostId = users[0].socketId;
+      this.broadcast(roomId, "host:changed", {
+        hostId: room.hostId,
+        hostNickname: users[0].nickname,
+      });
+    }
+    this.broadcast(roomId, "user:left", { socketId: this.id, users, hostId: room.hostId });
     if (room.users.size === 0) {
       store.rooms.delete(roomId);
     }
@@ -306,24 +338,38 @@ export class MockSocket {
   private handleVideoState(state: VideoState): void {
     if (!this.currentRoom) return;
     const room = getRoom(this.currentRoom);
+    if (room.roomMode === "theater" && room.hostId !== this.id) return;
     room.videoState = { ...state };
-    // Broadcast to other tabs; they receive "video:state" and apply it.
-    this.broadcast(this.currentRoom, "video:state", { videoState: state });
+    if (room.roomMode === "couple") {
+      this.broadcast(this.currentRoom, "video:sync-state", { videoState: state });
+    }
   }
 
   private handleVideoSeek(payload: SeekPayload): void {
     if (!this.currentRoom) return;
     const room = getRoom(this.currentRoom);
+    if (room.roomMode === "theater" && room.hostId !== this.id) return;
     room.videoState.currentTime = payload.currentTime;
     room.videoState.playing = payload.playing;
-    this.broadcast(this.currentRoom, "video:seek", payload);
+    if (room.roomMode === "couple") {
+      this.broadcast(this.currentRoom, "video:sync-state", { videoState: { ...room.videoState } });
+    }
   }
 
   private handleVideoLoad(state: VideoState): void {
     if (!this.currentRoom) return;
     const room = getRoom(this.currentRoom);
+    if (room.roomMode === "theater" && room.hostId !== this.id) return;
     room.videoState = { ...state };
-    // Do NOT broadcast — members sync only on explicit resync or host pause/play/seek
+    if (room.roomMode === "couple") {
+      this.broadcast(this.currentRoom, "video:sync-state", { videoState: state });
+    } else {
+      this.broadcast(this.currentRoom, "video:change-proposal", {
+        videoState: state,
+        proposerId: this.id,
+        proposerNickname: room.users.get(this.id)?.nickname ?? "",
+      });
+    }
   }
 }
 

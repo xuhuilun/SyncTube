@@ -18,11 +18,16 @@ export interface VideoState {
   currentTime: number;
 }
 
+export type RoomMode = "couple" | "theater";
+
 export interface Room {
   roomId: string;
   users: Map<string, OnlineUser>; // key: socketId
   videoState: VideoState;
   messages: ChatMessage[];
+  roomMode: RoomMode;
+  maxUsers: number;
+  hostId: string;
 }
 
 // ---- Socket event payloads ----
@@ -30,6 +35,8 @@ export interface Room {
 export interface JoinPayload {
   roomId: string;
   nickname: string;
+  roomMode?: RoomMode;
+  maxUsers?: number;
 }
 
 export interface JoinAck {
@@ -40,6 +47,8 @@ export interface JoinAck {
   messages: ChatMessage[];
   isHost: boolean;
   hostId: string;
+  roomMode: RoomMode;
+  maxUsers: number;
 }
 
 export interface UserJoinedPayload {
@@ -67,6 +76,12 @@ export interface VideoStatePayload {
   videoState: VideoState;
 }
 
+export interface VideoChangeProposalPayload {
+  videoState: VideoState;
+  proposerId: string;
+  proposerNickname: string;
+}
+
 export interface SeekPayload {
   currentTime: number;
   playing: boolean;
@@ -76,12 +91,12 @@ export interface SeekPayload {
 // the mock layer and a future real socket.io-client drop-in share the same shape.
 export type ServerToClientEvents = {
   "room:joined": (ack: JoinAck) => void;
-  "room:full": () => void;
+  "room:full": (payload: { maxUsers: number }) => void;
   "user:joined": (payload: UserJoinedPayload) => void;
   "user:left": (payload: UserLeftPayload) => void;
   "chat:message": (payload: ChatPayload) => void;
-  "video:state": (payload: VideoStatePayload) => void;
-  "video:seek": (payload: SeekPayload) => void;
+  "video:sync-state": (payload: VideoStatePayload) => void;
+  "video:change-proposal": (payload: VideoChangeProposalPayload) => void;
   "host:changed": (payload: HostChangedPayload) => void;
   "video:resync-request": (payload: { memberId: string }) => void;
 };
